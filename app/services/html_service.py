@@ -45,6 +45,29 @@ class HTMLProcessingService:
         except Exception as e:
             raise ValueError(f"Unexpected error while fetching template from URL: {str(e)}")
     
+    async def fetch_json_from_url(self, json_url: str) -> Dict[str, Any]:
+        """Fetch JSON data from URL"""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(json_url)
+                response.raise_for_status()
+                
+                # Check if content type is JSON
+                content_type = response.headers.get('content-type', '').lower()
+                if 'application/json' not in content_type and 'text/json' not in content_type:
+                    raise ValueError(f"URL does not return JSON content. Content-Type: {content_type}")
+                
+                return response.json()
+                
+        except httpx.TimeoutException:
+            raise ValueError("Timeout while fetching JSON from URL")
+        except httpx.HTTPStatusError as e:
+            raise ValueError(f"HTTP error {e.response.status_code} while fetching JSON from URL")
+        except httpx.RequestError as e:
+            raise ValueError(f"Network error while fetching JSON from URL: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"Unexpected error while fetching JSON from URL: {str(e)}")
+    
     def replace_placeholders_in_html(self, html_text: str, json_data: Dict[str, Any]) -> str:
         """Replace placeholders in HTML template"""
         storytitle = json_data.get("slide1", {}).get("storytitle", "")

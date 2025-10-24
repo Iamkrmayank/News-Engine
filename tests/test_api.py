@@ -105,7 +105,7 @@ def test_submit_content_missing_fields():
         "image_url": "https://example.com/image.jpg",
         "categories": "Entertainment",
         "filter_tags": "",
-        "prefinal_html": "<html></html>"
+        "prefinal_html_url": "https://example.com/template.html"
     })
     assert response.status_code == 422  # Validation error
 

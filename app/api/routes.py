@@ -136,10 +136,25 @@ async def process_html(request: HTMLProcessingRequest):
         
         filename = generate_filename("output_bundle", "zip")
         
+        # Upload files to S3 and get CloudFront URLs
+        try:
+            from app.services.s3_service import S3Service
+            s3_service = S3Service()
+            html_s3_url, json_s3_url = s3_service.upload_processed_files(
+                updated_html, updated_json, "processed_html"
+            )
+        except Exception as s3_error:
+            # If S3 upload fails, still return the response without S3 URLs
+            html_s3_url = None
+            json_s3_url = None
+            print(f"S3 upload failed: {s3_error}")
+        
         return HTMLProcessingResponse(
             updated_html=updated_html,
             updated_json=updated_json,
-            filename=filename
+            filename=filename,
+            html_s3_url=html_s3_url,
+            json_s3_url=json_s3_url
         )
         
     except Exception as e:
@@ -233,24 +248,79 @@ async def generate_amp(request: AMPGenerationRequest):
             # Use empty template if neither provided
             amp_template_html = ""
         
+        # Determine output JSON data source
+        output_json_data = {}
+        
+        if request.output_json_url:
+            # Fetch JSON data from URL
+            output_json_data = await html_service.fetch_json_from_url(str(request.output_json_url))
+        elif request.output_json:
+            # Use provided JSON data
+            output_json_data = request.output_json
+        else:
+            # Use empty JSON if neither provided
+            output_json_data = {}
+        
         # Process AMP template
-        final_html = html_service.process_amp_template(amp_template_html, request.output_json)
+        final_html = html_service.process_amp_template(amp_template_html, output_json_data)
         
         filename = generate_filename("pre-final_amp_story", "html")
         
+        # Upload HTML to S3 and get CloudFront URL
+        try:
+            from app.services.s3_service import S3Service
+            s3_service = S3Service()
+            html_s3_url = s3_service.upload_amp_html(final_html, "amp_story")
+        except Exception as s3_error:
+            # If S3 upload fails, still return the response without S3 URL
+            html_s3_url = None
+            print(f"S3 upload failed: {s3_error}")
+        
         return AMPGenerationResponse(
             final_html=final_html,
-            filename=filename
+            filename=filename,
+            html_s3_url=html_s3_url
         )
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AMP generation failed: {str(e)}")
 
 
-@router.post("/generate-amp-download", response_class=Response)
+@router.get("/download-amp/{filename}")
+async def download_amp_file(filename: str):
+    """
+    Download AMP HTML file by filename
+    """
+    try:
+        # For now, we'll store files in a temporary directory
+        # In production, you might want to use S3 or a proper file storage
+        import os
+        temp_dir = "temp"
+        file_path = os.path.join(temp_dir, filename)
+        
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        return Response(
+            content=content,
+            media_type="text/html",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}",
+                "Content-Length": str(len(content.encode('utf-8')))
+            }
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"File download failed: {str(e)}")
+
+
+@router.post("/generate-amp-download", response_model=AMPGenerationResponse)
 async def generate_amp_download(request: AMPGenerationRequest):
     """
-    Generate AMP HTML from template and JSON and return HTML file for download
+    Generate AMP HTML from template and JSON and return both HTML content and download URL
     """
     try:
         # Determine AMP template source
@@ -266,21 +336,53 @@ async def generate_amp_download(request: AMPGenerationRequest):
             # Use empty template if neither provided
             amp_template_html = ""
         
+        # Determine output JSON data source
+        output_json_data = {}
+        
+        if request.output_json_url:
+            # Fetch JSON data from URL
+            output_json_data = await html_service.fetch_json_from_url(str(request.output_json_url))
+        elif request.output_json:
+            # Use provided JSON data
+            output_json_data = request.output_json
+        else:
+            # Use empty JSON if neither provided
+            output_json_data = {}
+        
         # Process AMP template
-        final_html = html_service.process_amp_template(amp_template_html, request.output_json)
+        final_html = html_service.process_amp_template(amp_template_html, output_json_data)
         
         # Generate filename
         timestamp = int(time.time())
         html_filename = f"generated_amp_story_{timestamp}.html"
         
-        # Return HTML file as download
-        return Response(
-            content=final_html,
-            media_type="text/html",
-            headers={
-                "Content-Disposition": f"attachment; filename={html_filename}",
-                "Content-Length": str(len(final_html.encode('utf-8')))
-            }
+        # Save file to temp directory for download
+        import os
+        temp_dir = "temp"
+        os.makedirs(temp_dir, exist_ok=True)
+        file_path = os.path.join(temp_dir, html_filename)
+        
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(final_html)
+        
+        # Generate download URL
+        download_url = f"/api/v1/download-amp/{html_filename}"
+        
+        # Upload HTML to S3 and get CloudFront URL
+        try:
+            from app.services.s3_service import S3Service
+            s3_service = S3Service()
+            html_s3_url = s3_service.upload_amp_html(final_html, "generated_amp_story")
+        except Exception as s3_error:
+            # If S3 upload fails, still return the response without S3 URL
+            html_s3_url = None
+            print(f"S3 upload failed: {s3_error}")
+        
+        return AMPGenerationResponse(
+            final_html=final_html,
+            filename=html_filename,
+            download_url=download_url,
+            html_s3_url=html_s3_url
         )
         
     except Exception as e:
@@ -348,6 +450,9 @@ async def submit_content(request: ContentSubmissionRequest):
         # Process image URL
         cover_image_url = request.cover_image_url if request.use_custom_cover else request.image_url
         
+        # Fetch HTML content from URL
+        prefinal_html = await html_service.fetch_template_from_url(str(request.prefinal_html_url))
+        
         # Process HTML template
         submission_data = {
             "story_title": request.story_title,
@@ -362,7 +467,7 @@ async def submit_content(request: ContentSubmissionRequest):
             "selected_user": get_random_user()
         }
         
-        processed_html = html_service.process_content_submission(request.prefinal_html, submission_data)
+        processed_html = html_service.process_content_submission(prefinal_html, submission_data)
         
         # Generate resized image URLs
         resized_urls = s3_service.generate_resized_image_urls(str(request.image_url))

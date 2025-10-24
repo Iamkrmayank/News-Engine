@@ -75,13 +75,40 @@ class AMPGenerationRequest(BaseModel):
     """Request model for AMP generation (Tab 4)"""
     amp_template_html: Optional[str] = Field(None, description="AMP template HTML")
     amp_template_url: Optional[HttpUrl] = Field(None, description="URL to fetch AMP template from")
-    output_json: Dict[str, Any] = Field(..., description="Output JSON data")
+    output_json: Optional[Union[Dict[str, Any], str]] = Field(None, description="Output JSON data")
+    output_json_url: Optional[HttpUrl] = Field(None, description="URL to fetch output JSON data from")
     
     @model_validator(mode='after')
     def validate_template_source(self):
-        """Ensure at least one template source is provided"""
-        if not self.amp_template_html and not self.amp_template_url:
+        """Ensure at least one template source is provided and not both"""
+        has_template_html = self.amp_template_html and self.amp_template_html.strip() and self.amp_template_html != "string" and self.amp_template_html != ""
+        has_template_url = self.amp_template_url is not None
+        
+        if not has_template_html and not has_template_url:
             raise ValueError("Either amp_template_html or amp_template_url must be provided")
+        
+        if has_template_html and has_template_url:
+            raise ValueError("Provide either amp_template_html OR amp_template_url, not both")
+        
+        return self
+    
+    @model_validator(mode='after')
+    def validate_output_data(self):
+        """Ensure at least one output data source is provided and not both"""
+        has_output_json = False
+        if isinstance(self.output_json, dict):
+            has_output_json = self.output_json != {}
+        elif isinstance(self.output_json, str):
+            has_output_json = self.output_json.strip() != ""
+        
+        has_output_json_url = self.output_json_url is not None
+        
+        if not has_output_json and not has_output_json_url:
+            raise ValueError("Either output_json or output_json_url must be provided")
+        
+        if has_output_json and has_output_json_url:
+            raise ValueError("Provide either output_json OR output_json_url, not both")
+        
         return self
 
 
@@ -97,7 +124,7 @@ class ContentSubmissionRequest(BaseModel):
     filter_tags: str = Field(..., description="Comma-separated filter tags")
     use_custom_cover: bool = Field(default=False, description="Use custom cover image")
     cover_image_url: Optional[HttpUrl] = Field(None, description="Custom cover image URL")
-    prefinal_html: str = Field(..., description="Pre-final AMP HTML content")
+    prefinal_html_url: HttpUrl = Field(..., description="URL to pre-final AMP HTML content")
 
 
 class CoverImageRequest(BaseModel):
@@ -150,6 +177,8 @@ class HTMLProcessingResponse(BaseModel):
     updated_json: Dict[str, Any]
     filename: str
     download_url: Optional[str] = None
+    html_s3_url: Optional[str] = None
+    json_s3_url: Optional[str] = None
 
 
 class AMPGenerationResponse(BaseModel):
@@ -157,6 +186,7 @@ class AMPGenerationResponse(BaseModel):
     final_html: str
     filename: str
     download_url: Optional[str] = None
+    html_s3_url: Optional[str] = None
 
 
 class MetadataResponse(BaseModel):

@@ -173,3 +173,57 @@ class S3Service:
             return f"{self.cdn_prefix_media}{key}"
         except Exception as e:
             raise Exception(f"Thumbnail upload failed: {str(e)}")
+    
+    def upload_processed_files(self, html_content: str, json_content: Dict[str, Any], filename_prefix: str = "processed") -> tuple[str, str]:
+        """Upload processed HTML and JSON files to S3 and return CloudFront URLs"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Upload HTML file
+            html_filename = f"{filename_prefix}_{timestamp}.html"
+            html_s3_key = f"{self.s3_prefix}{html_filename}"
+            self.s3_client.put_object(
+                Bucket=self.bucket,
+                Key=html_s3_key,
+                Body=html_content.encode("utf-8"),
+                ContentType="text/html; charset=utf-8",
+            )
+            html_url = f"{self.cdn_base}{html_s3_key}"
+            
+            # Upload JSON file
+            json_filename = f"{filename_prefix}_{timestamp}.json"
+            json_s3_key = f"{self.s3_prefix}{json_filename}"
+            json_str = json.dumps(json_content, indent=2, ensure_ascii=False)
+            self.s3_client.put_object(
+                Bucket=self.bucket,
+                Key=json_s3_key,
+                Body=json_str.encode("utf-8"),
+                ContentType="application/json; charset=utf-8",
+            )
+            json_url = f"{self.cdn_base}{json_s3_key}"
+            
+            return html_url, json_url
+            
+        except Exception as e:
+            raise Exception(f"Processed files upload failed: {str(e)}")
+    
+    def upload_amp_html(self, html_content: str, filename_prefix: str = "amp_story") -> str:
+        """Upload AMP HTML file to S3 and return CloudFront URL"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Upload HTML file
+            html_filename = f"{filename_prefix}_{timestamp}.html"
+            html_s3_key = f"{self.s3_prefix}{html_filename}"
+            self.s3_client.put_object(
+                Bucket=self.bucket,
+                Key=html_s3_key,
+                Body=html_content.encode("utf-8"),
+                ContentType="text/html; charset=utf-8",
+            )
+            html_url = f"{self.cdn_base}{html_s3_key}"
+            
+            return html_url
+            
+        except Exception as e:
+            raise Exception(f"AMP HTML upload failed: {str(e)}")
